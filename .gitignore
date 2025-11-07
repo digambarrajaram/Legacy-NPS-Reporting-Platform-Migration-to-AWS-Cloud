@@ -1,0 +1,31 @@
+.terraform.*
+terraform.*
+prod.tfvars
+.idea
+.terraform/providers/registry.terraform.io/hashicorp/aws/6.19.0/windows_amd64/terraform-provider-aws_v6.19.0_x5.exe
+.terraform/*
+backend/.terraform/providers/registry.terraform.io/hashicorp/aws/6.10.0/windows_amd64/terraform-provider-aws_v6.10.0_x5.exe
+terraform/envs/prod/.terraform/providers/registry.terraform.io/hashicorp/aws/6.19.0/windows_amd64/terraform-provider-aws_v6.19.0_x5.exe
+# === Terraform Files ===
+# Local state files
+*.tfstate
+*.tfstate.*
+# Backup state files
+*.tfstate.backup
+
+# Execution/Plan files
+*.tfplan
+.terraform/
+.terraformrc
+crash.log
+
+# Override files used for development or temporary changes
+override.tf
+override_*.tf
+*_override.tf
+*_override_*.tf
+
+# Sensitive variable files (RECOMMENDED)
+# If you commit a template like 'terraform.tfvars.sample',
+# ensure you ignore the one that holds the actual secrets.
+*.tfvars
