@@ -1,0 +1,24 @@
+---
+- name: Validate DR cutover (acceptance tests)
+  hosts: controllers
+  connection: local
+  gather_facts: no
+  vars_files:
+    - ../group_vars/all.yml
+
+  tasks:
+    - name: Copy acceptance script locally
+      copy:
+        src: ../roles/dr-failover/files/acceptance.sh
+        dest: /tmp/dr_acceptance.sh
+        mode: '0755'
+
+    - name: Run acceptance checks against DR ingress
+      community.general.shell:
+        cmd: "/tmp/dr_acceptance.sh {{ dr_ingress_alias | default('http://localhost:8080') }}"
+      register: acceptance_result
+      failed_when: acceptance_result.rc != 0
+
+    - name: Show acceptance stdout
+      debug:
+        var: acceptance_result.stdout_lines

@@ -1,0 +1,13 @@
+replicaCount: 2
+image:
+  tag: "stage"
+env:
+  - name: APP_ENV
+    value: "stage"
+  - name: APP_VERSION
+    value: "0.1.0-stage"
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

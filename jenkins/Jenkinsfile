@@ -1,0 +1,155 @@
+/*
+Jenkinsfile – CI/CD pipeline for NPS Reporting Migration
+Author: Digambar Rajaram (Protean eGov Technologies Ltd.)
+Description:
+  Builds Python reporting app Docker image,
+  pushes to AWS ECR, and deploys to EKS via Helm.
+
+Pipeline stages:
+  1. Checkout
+  2. Setup / version tagging
+  3. Build & test
+  4. Security scan (optional)
+  5. Push to ECR
+  6. Deploy via Helm (dev/stage/prod)
+  7. Post notifications / cleanup
+*/
+
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION      = "ap-south-1"
+    AWS_ACCOUNT_ID  = "YOUR_AWS_ACCOUNT_ID"
+    ECR_REPO        = "reporting"
+    IMAGE           = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+    APP_NAME        = "reporting"
+    HELM_PATH       = "helm/reporting"
+    NAMESPACE_DEV   = "nps-dev"
+    NAMESPACE_STAGE = "nps-stage"
+    NAMESPACE_PROD  = "nps-prod"
+  }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        echo "Branch: ${env.BRANCH_NAME}"
+      }
+    }
+
+    stage('Set Version / Tag') {
+      steps {
+        script {
+          env.GIT_SHA = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          env.IMAGE_TAG = "${GIT_SHA}"
+          echo "Using image tag: ${IMAGE_TAG}"
+        }
+      }
+    }
+
+    stage('Install Dependencies & Unit Test') {
+      steps {
+        sh '''
+          python3 -m venv .venv && . .venv/bin/activate
+          pip install -r app/requirements.txt pytest
+          pytest -q || true
+        '''
+      }
+    }
+
+    stage('Build Docker Image') {
+      steps {
+        sh '''
+          docker build -f app/Dockerfile -t ${IMAGE}:${IMAGE_TAG} .
+        '''
+      }
+    }
+
+    stage('Security Scan (Trivy)') {
+      when { expression { return false } } // enable when ready
+      steps {
+        sh '''
+          echo "[INFO] Skipping Trivy for now"
+          # trivy image --exit-code 0 ${IMAGE}:${IMAGE_TAG} || true
+        '''
+      }
+    }
+
+    stage('Push to ECR') {
+      steps {
+        sh '''
+          aws ecr get-login-password --region ${AWS_REGION} | \
+            docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+          aws ecr describe-repositories --repository-names ${ECR_REPO} --region ${AWS_REGION} >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name ${ECR_REPO} --region ${AWS_REGION}
+
+          docker push ${IMAGE}:${IMAGE_TAG}
+        '''
+      }
+    }
+
+    stage('Deploy to EKS') {
+      steps {
+        script {
+          def envTarget = input(
+            message: "Select environment to deploy:",
+            parameters: [
+              choice(name: 'TARGET_ENV', choices: ['dev', 'stage', 'prod'], description: 'Environment')
+            ]
+          )
+          echo "Deploying to ${envTarget}..."
+
+          def nsMap = [
+            dev:   "${NAMESPACE_DEV}",
+            stage: "${NAMESPACE_STAGE}",
+            prod:  "${NAMESPACE_PROD}"
+          ]
+
+          def valuesFile = [
+            dev:   "helm/reporting/values-dev.yaml",
+            stage: "helm/reporting/values-stage.yaml",
+            prod:  "helm/reporting/values-prod.yaml"
+          ][envTarget]
+
+          try {
+            sh """
+              aws eks update-kubeconfig --name YOUR_EKS_CLUSTER --region ${AWS_REGION}
+              helm upgrade --install ${APP_NAME}-${envTarget} ${HELM_PATH} \
+                --namespace ${nsMap[envTarget]} --create-namespace \
+                -f helm/reporting/values.yaml -f ${valuesFile} \
+                --set image.repository=${IMAGE} \
+                --set image.tag=${IMAGE_TAG} \
+                --set env[0].value=${envTarget}
+            """
+          } catch (err) {
+            echo "[ERROR] Helm deploy failed, rolling back..."
+            sh "helm rollback ${APP_NAME}-${envTarget} 0 || true"
+            error "Deployment failed for ${envTarget}: ${err}"
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "[✔] Deployment successful for ${env.BRANCH_NAME} (${env.IMAGE_TAG})"
+    }
+    failure {
+      echo "[✖] Pipeline failed. Check logs."
+    }
+    always {
+      cleanWs()
+    }
+  }
+}

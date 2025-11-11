@@ -1,0 +1,32 @@
+---
+# AWS / Regions
+aws_region_primary: YOUR_AWS_REGION_PRIMARY
+aws_region_dr: YOUR_AWS_REGION_DR
+
+# RDS / Aurora (identifiers)
+rds_cluster_id_primary: YOUR_RDS_CLUSTER_ID_PRIMARY
+rds_cluster_id_dr: YOUR_RDS_CLUSTER_ID_DR
+
+# Route53 / DNS
+route53_zone_id: YOUR_ROUTE53_ZONE_ID
+route53_record_name: reporting.YOUR_DOMAIN
+
+# DR target (ALB DNS / CloudFront / IP) - used when updating DNS to DR
+dr_ingress_alias: "DR_ALB_DNS_OR_ALIAS"
+
+# Kubernetes / Helm
+k8s_cluster_name: YOUR_EKS_CLUSTER_NAME
+k8s_cluster_region: "{{ aws_region_dr }}"   # assume DR cluster in DR region
+k8s_namespace: nps
+helm_release_name: prod
+
+# App scaling for DR
+dr_scale_replicas: 4
+
+# Timeouts / retries
+rds_wait_retries: 30
+rds_wait_delay: 20
+
+# Audit/logging
+dr_run_id: "{{ lookup('pipe','date +%s') }}"
+dr_run_owner: "{{ lookup('env','USER') | default('ansible') }}"

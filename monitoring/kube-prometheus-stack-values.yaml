@@ -1,0 +1,54 @@
+# kube-prometheus-stack-values.yaml
+prometheusOperator:
+  enabled: true
+  admissionWebhooks:
+    enabled: true
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelector:
+      matchLabels:
+        team: reporting
+    podMonitorSelector: {}
+    ruleSelector: {}
+    evaluationInterval: 30s
+    scrapeInterval: 15s
+    # tune retention according to needs:
+    retention: 15d
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+# Alertmanager (optional - keep default configuration)
+alertmanager:
+  enabled: true
+
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: changeme
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      folder: /tmp/dashboards
+
+# Allow serviceMonitors in all namespaces (if required). Set to false if you want restriction.
+prometheusOperator:
+  allowCrossNamespaceDiscovery: true
+
+# If you run in a restricted namespace, ensure RBAC allows access to ServiceMonitors
+rbac:
+  create: true
+
+# Optional: node-exporter, kube-state-metrics - leave defaults unless you want to disable
+kube-state-metrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true

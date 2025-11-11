@@ -1,0 +1,33 @@
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Venvs
+.venv/
+env/
+
+# Git & IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Build / Dist
+build/
+dist/
+*.egg-info/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Terraform local state (keep remote state in S3/DDB)
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+
+# Node/npm (if any UI later)
+node_modules/

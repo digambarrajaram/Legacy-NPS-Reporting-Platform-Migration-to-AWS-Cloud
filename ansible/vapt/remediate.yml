@@ -1,0 +1,9 @@
+---
+- name: Apply VAPT remediation (skeleton)
+  hosts: controllers
+  connection: local
+  gather_facts: no
+  vars_files:
+    - ../group_vars/all.yml
+  roles:
+    - role: security-remediate

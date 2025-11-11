@@ -1,0 +1,103 @@
+---
+- name: "DR Failover | Promote RDS read-replica (if applicable)"
+  community.aws.rds_info:
+    region: "{{ aws_region_dr }}"
+    db_cluster_identifier: "{{ rds_cluster_id_dr }}"
+  register: rds_info_before
+  failed_when: false
+
+- name: "DR Failover | Try promote read-replica or trigger failover"
+  block:
+    - name: "If using Aurora, call failover API"
+      community.aws.rds:
+        region: "{{ aws_region_dr }}"
+        command: failover-db-cluster
+        db_cluster_identifier: "{{ rds_cluster_id_dr }}"
+      when: "'aurora' in (rds_info_before.clusters[0].engine|lower) | default(false)"
+      register: rds_promote
+      failed_when: false
+    - name: "If not Aurora, try promote read replica (RDS - logical promote)"
+      community.aws.rds:
+        region: "{{ aws_region_dr }}"
+        db_instance_identifier: "{{ rds_cluster_id_dr }}"
+        state: present
+        promote_read_replica: true
+      when: "'aurora' not in (rds_info_before.clusters[0].engine|lower) | default(true)"
+      register: rds_promote
+      failed_when: false
+  rescue:
+    - name: "DR Failover | Log promotion error"
+      debug:
+        msg: "Promotion attempt returned: {{ rds_promote | default('no-data') }}"
+
+- name: "DR Failover | Wait for RDS to become available"
+  community.aws.rds_info:
+    region: "{{ aws_region_dr }}"
+    db_cluster_identifier: "{{ rds_cluster_id_dr }}"
+  register: rds_info_after
+  until: rds_info_after.clusters and rds_info_after.clusters[0].status == 'available'
+  retries: "{{ rds_wait_retries }}"
+  delay: "{{ rds_wait_delay }}"
+
+- name: "DR Failover | Record RDS endpoint"
+  set_fact:
+    dr_db_endpoint: "{{ rds_info_after.clusters[0].endpoint }}"
+
+- name: "DR Failover | Update Route53 record to point to DR ingress"
+  community.aws.route53:
+    zone: "{{ route53_zone_id }}"
+    record: "{{ route53_record_name }}"
+    type: A
+    ttl: 60
+    value: "{{ dr_ingress_alias }}"
+    alias: true
+    state: present
+  register: route53_update
+
+- name: "DR Failover | Update kubeconfig for DR EKS cluster"
+  community.aws.eks_cluster_info:
+    name: "{{ k8s_cluster_name }}"
+    region: "{{ k8s_cluster_region }}"
+  register: eks_info
+
+- name: "DR Failover | Write kubeconfig (uses awscli, requires awscli installed)"
+  shell: >
+    aws eks update-kubeconfig --name {{ k8s_cluster_name }} --region {{ k8s_cluster_region }}
+  environment:
+    AWS_DEFAULT_REGION: "{{ k8s_cluster_region }}"
+  changed_when: false
+
+- name: "DR Failover | Scale deployment in DR namespace"
+  kubernetes.core.k8s_scale:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ helm_release_name }}-reporting"
+    namespace: "{{ k8s_namespace }}"
+    replicas: "{{ dr_scale_replicas }}"
+  register: scale_result
+  failed_when: false
+
+- name: "DR Failover | Wait for scaled pods to be ready"
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: "{{ k8s_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/instance={{ helm_release_name }}"
+  register: pods_info
+  until: pods_info.resources | length >= (dr_scale_replicas | int)
+  retries: 20
+  delay: 10
+
+- name: "DR Failover | Add audit entry to local DR run log"
+  local_action:
+    module: copy
+    content: |
+      dr_run_id: {{ dr_run_id }}
+      owner: {{ dr_run_owner }}
+      timestamp: "{{ lookup('pipe','date -Iseconds') }}"
+      rds_promote: "{{ rds_promote | default('none') | to_nice_yaml }}"
+      dr_db_endpoint: "{{ dr_db_endpoint }}"
+      route53_update: "{{ route53_update | default('none') | to_nice_yaml }}"
+      scale_result: "{{ scale_result | default('none') | to_nice_yaml }}"
+    dest: "./ansible/dr_runs/dr_run_{{ dr_run_id }}.log"
+  run_once: true

@@ -1,0 +1,16 @@
+replicaCount: 3
+image:
+  tag: "RELEASE_TAG_OR_GIT_SHA"
+env:
+  - name: APP_ENV
+    value: "prod"
+  - name: APP_VERSION
+    value: "0.1.0"
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 65
+pdb:
+  enabled: true
+  minAvailable: 2

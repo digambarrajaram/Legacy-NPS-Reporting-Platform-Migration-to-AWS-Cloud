@@ -1,0 +1,9 @@
+---
+- name: Orchestrate DR failover for reporting service
+  hosts: controllers
+  connection: local
+  gather_facts: no
+  vars_files:
+    - ../group_vars/all.yml
+  roles:
+    - role: dr-failover

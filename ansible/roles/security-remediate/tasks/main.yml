@@ -1,0 +1,35 @@
+---
+- name: "Security | Ensure no open 0.0.0.0/0 SSH on security groups"
+  community.aws.ec2_group:
+    name: "{{ item.group_name }}"
+    region: "{{ aws_region_primary }}"
+    state: present
+  loop: []
+  when: false
+  # NOTE: This is a placeholder. Use 'community.aws.ec2_group_facts' to find SGs with 0.0.0.0/0 and remediate.
+
+- name: "Security | Example - remove overly permissive ingress (placeholder)"
+  community.aws.ec2_security_group:
+    name: "example-sg"
+    region: "{{ aws_region_primary }}"
+    rules:
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: "10.0.0.0/8"
+    state: present
+  when: false
+
+- name: "Security | Rotate IAM user access keys (placeholder)"
+  debug:
+    msg: "Rotate access keys using organization process or AWS Secrets Manager/SSO. Automate with caution."
+
+- name: "Security | Create remediation report"
+  local_action:
+    module: copy
+    content: |
+      remediation_run_id: {{ lookup('pipe','date +%s') }}
+      owner: {{ lookup('env','USER') | default('ansible') }}
+      notes: "Run security remediation tasks. Review and customize before enabling destructive changes."
+    dest: "./ansible/security_runs/remediate_run_{{ lookup('pipe','date +%s') }}.log"
+  run_once: true
