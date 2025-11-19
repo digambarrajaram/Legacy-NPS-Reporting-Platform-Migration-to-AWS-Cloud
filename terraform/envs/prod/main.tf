@@ -1,6 +1,8 @@
 #############################################
 # Provider
 #############################################
+data "aws_caller_identity" "current" {}
+
 provider "aws" {
   region = var.aws_region
   default_tags {
@@ -92,4 +94,33 @@ resource "aws_security_group_rule" "allow_eks_to_rds" {
       error_message = "EKS and RDS must be in the same VPC."
     }
   }
+}
+module "ecr" {
+  source = "../../modules/ecr"
+  name = var.name
+  tags = var.tags
+  kms_key_alias = var.kms_key_alias
+  image_retention_days = var.image_retention_days
+}
+
+resource "local_file" "jenkins_ecr_output" {
+  filename = "${path.module}/jenkins-outputs.json"
+  content  = templatefile("${path.module}/jenkins-outputs.tpl", {
+    account_id            = data.aws_caller_identity.current.account_id,
+    region                = var.aws_region,
+    repository_url        = module.ecr.repository_url,
+    repository_name       = module.ecr.repository_name,
+    repository_arn        = module.ecr.repository_arn,
+    eks_cluster_name      = module.eks.cluster_name,
+    eks_cluster_endpoint  = module.eks.cluster_endpoint,
+    eks_cluster_ca        = module.eks.cluster_ca_data,
+    irsa_role_arn         = module.iam.irsa_role_arn,
+    k8s_namespace         = var.k8s_namespace,
+    helm_release_name     = var.helm_release_name,
+    reporting_s3_bucket   = module.s3.reporting_bucket_name,
+    rds_endpoint          = module.rds.endpoint,
+    rds_port              = module.rds.port,
+    secrets_manager_prefix = var.secrets_manager_prefix
+  })
+  file_permission = "0640"
 }
