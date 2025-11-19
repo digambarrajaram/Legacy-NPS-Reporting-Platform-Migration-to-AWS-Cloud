@@ -1,0 +1,8 @@
+apt update -y
+apt install docker.io
+docker --version
+apt install docker-buildx
+apt update -y
+docker build -t myapp app/.
+docker logs 3afc16593713
+sudo docker run -d -e PROMETHEUS_MULTIPROC_DIR=/tmp/prom_multiproc   -v /tmp/prom_multiproc:/tmp/prom_multiproc   -p 80:8080   --rm myapp

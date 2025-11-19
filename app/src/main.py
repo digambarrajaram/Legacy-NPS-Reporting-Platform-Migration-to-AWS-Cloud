@@ -8,8 +8,18 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
-from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from pythonjsonlogger import jsonlogger
+
+# Prometheus imports
+from prometheus_client import (
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    multiprocess,
+)
 
 # -------- Logging (JSON) --------
 logger = logging.getLogger("nps-app")
@@ -23,7 +33,6 @@ class Settings(BaseSettings):
     app_name: str = "NPS Reporting Service"
     app_env: str = os.getenv("APP_ENV", "dev")
     version: str = os.getenv("APP_VERSION", "0.1.0")
-    # Example DB / S3 config placeholders (wire via Secrets/SSM later)
     db_host: Optional[str] = None
     db_name: Optional[str] = None
     s3_bucket: Optional[str] = None
@@ -32,14 +41,42 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# -------- Metrics --------
-REQ_COUNT = Counter("http_requests_total", "HTTP Requests", ["path", "method", "status"])
-REQ_LAT = Histogram("http_request_duration_seconds", "HTTP request duration", buckets=(0.05,0.1,0.25,0.5,1,2,5))
-UP_GAUGE = Gauge("service_up", "Service up (1) / down (0)")
-START_TIME = Gauge("process_start_time_seconds", "Start time in unix timestamp")
+# -------- Metrics (safe init, prevents duplicate registration) --------
+# Use a module-level guard to avoid creating metrics twice in the same process.
+if "METRICS_INITIALIZED" not in globals():
+    try:
+        REQ_COUNT = Counter("http_requests_total", "HTTP Requests", ["path", "method", "status"])
+        REQ_LAT = Histogram(
+            "http_request_duration_seconds",
+            "HTTP request duration",
+            buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+        )
+        UP_GAUGE = Gauge("service_up", "Service up (1) / down (0)")
+        # START_TIME can sometimes conflict in some setups — wrap in try/except
+        try:
+            START_TIME = Gauge("process_start_time_seconds", "Start time in unix timestamp")
+            START_TIME.set_to_current_time()
+        except ValueError:
+            # metric already registered in this process; skip
+            START_TIME = None
 
-UP_GAUGE.set(1)
-START_TIME.set_to_current_time()
+        # mark metrics as initialized to prevent double-registration
+        METRICS_INITIALIZED = True
+    except Exception as e:
+        # If anything unexpected happens, log and continue (avoid crashing import)
+        logger.exception({"msg": "metrics init failed", "error": str(e)})
+        # ensure names exist to prevent NameError later
+        REQ_COUNT = globals().get("REQ_COUNT", None)
+        REQ_LAT = globals().get("REQ_LAT", None)
+        UP_GAUGE = globals().get("UP_GAUGE", None)
+        START_TIME = globals().get("START_TIME", None)
+
+# set service up
+try:
+    if UP_GAUGE:
+        UP_GAUGE.set(1)
+except Exception:
+    pass
 
 # -------- App --------
 app = FastAPI(title=settings.app_name, version=settings.version)
@@ -50,8 +87,10 @@ async def metrics_middleware(request: Request, call_next):
     start = time.time()
     response = await call_next(request)
     try:
-        REQ_COUNT.labels(path=request.url.path, method=request.method, status=response.status_code).inc()
-        REQ_LAT.observe(time.time() - start)
+        if REQ_COUNT is not None:
+            REQ_COUNT.labels(path=request.url.path, method=request.method, status=response.status_code).inc()
+        if REQ_LAT is not None:
+            REQ_LAT.observe(time.time() - start)
     except Exception as e:
         logger.exception({"msg": "metrics record failed", "error": str(e)})
     return response
@@ -61,10 +100,25 @@ async def metrics_middleware(request: Request, call_next):
 def health():
     return {"status": "ok", "env": settings.app_env, "version": settings.version}
 
-# Metrics
+# Metrics endpoint — supports multiprocess mode when PROMETHEUS_MULTIPROC_DIR is set
 @app.get("/metrics")
 def metrics():
-    data = generate_latest()
+    # If running in multiprocess mode (Gunicorn with multiple workers), the exporter files
+    # are read by multiprocess.MultiProcessCollector into a CollectorRegistry.
+    mp_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if mp_dir:
+        try:
+            registry = CollectorRegistry()
+            multiprocess.MultiProcessCollector(registry)
+            data = generate_latest(registry)
+        except Exception as e:
+            logger.exception({"msg": "failed to generate multiprocess metrics", "error": str(e)})
+            # fallback to default generate_latest()
+            data = generate_latest()
+    else:
+        # single-process default
+        data = generate_latest()
+
     return PlainTextResponse(content=data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
 
 # Root
@@ -81,11 +135,9 @@ class ReportRequest(BaseModel):
 
 @app.post("/reports/run")
 def run_report(req: ReportRequest):
-    # Placeholder: call workers/db/S3 in real impl
     if req.limit <= 0:
         raise HTTPException(400, "limit must be > 0")
     logger.info({"msg": "report_requested", "type": req.report_type, "from": req.from_date, "to": req.to_date, "limit": req.limit})
-    # Simulated processing
     return JSONResponse(
         {
             "status": "accepted",
